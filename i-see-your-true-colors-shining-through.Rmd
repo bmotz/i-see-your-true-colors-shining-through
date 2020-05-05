@@ -67,6 +67,11 @@ data$longitude[data$city_name=="Comandante Nicanor Otamendi"] <- -57.85
 data <- data %>% mutate(tz = tz_lookup_coords(latitude, longitude, method = "fast"))
 # Convert submission timestamp strings into timestamps
 data$submit_date <- ymd_hms(data$submit_date)
+# For those records where we have a time zone, force it on a new date column
+local.data <- data %>% filter(!is.na(tz)) %>% rowwise %>% 
+  mutate(local_submit_date = force_tz(submit_date,tz)) %>%
+  select(hexcode,name,votes,user_id,submit_date,local_submit_date)
+data <- merge(data, local.data, by=c("hexcode","name","votes","user_id","submit_date"), all.x = TRUE)
 ```
 
 ## Descriptive Analyses
@@ -78,6 +83,10 @@ With the data all imported and preprocessed, we can do some basic summaries of t
 data %>% mutate(date = as.Date(submit_date,"GMT")) %>% 
   ggplot(aes(x=date)) + 
   geom_histogram(binwidth=30)
+# What time of day did these get submitted?
+data %>% filter(!is.na(local_submit_date)) %>% mutate(hour = hour(local_submit_date)) %>%
+  ggplot(aes(x=hour)) +
+  geom_histogram(binwidth=1)
 # Where are these proposals coming from?
 ggplot() + borders("world", colour="gray50", fill="gray50") +
   geom_point(aes(x=data$longitude,y=data$latitude), color="blue", size=2)
@@ -86,12 +95,17 @@ ggplot() + borders("world", colour="gray50", fill="gray50") +
 
 ## Sentiment
 
-The colornames provided can be estimated for their valence (positive/negative) of sentiment.  There is a well-established body of work examining color preferences across the color spectrum.  The sentiment of color names may provide complementary insights into humans' preferences for different colors.
+The colornames provided can be estimated for their valence (positive/negative) of sentiment <https://en.wikipedia.org/wiki/Sentiment_analysis>.  There is a well-established body of work examining color preferences across the color spectrum.  The sentiment of color names may provide complementary insights into humans' preferences for different colors.
 
 ```{r sentiment-analyses}
-# Get sentiment from sentimentr; this takes a while
+# Get sentiment from sentimentr; this takes a long while
 data <- data %>% select(name) %>% get_sentences() %>% 
   sentiment_by() %>% select(sentiment = ave_sentiment) %>% bind_cols(data,.)
+# Sentiment over time of day
+data %>% filter(!is.na(local_submit_date)) %>% mutate(hour = hour(local_submit_date)) %>%
+  group_by(hour) %>% summarize(avg_sentiment = mean(sentiment)) %>%
+  ggplot(aes(x=hour, y=avg_sentiment)) + 
+  geom_line()
 # Recreate Fig 1C from Palmer & Schloss (2010): 10.1073/pnas.0906172107
 fdat <- data %>% filter(v>0.6) %>%
                  mutate(hbin = as.character(ntile(h,8)+1),
