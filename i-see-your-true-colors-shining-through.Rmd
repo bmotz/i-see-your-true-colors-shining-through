@@ -22,6 +22,8 @@ The names provided offer a spectacular wealth of information about psychological
 
 On May 2, 2020, Guy K. from <https://colornames.org> generously provided a dump of the complete colornames.org database, enhanced with timestamps of when names were proposed and votes were cast, and including geolocation data (inferred from visitor IP addresses using the MaxMind GeoIP2 lookup table).  This markdown file documents analyses of these data.
 
+## Initial Import and Preprocessing
+
 We'll start with some basic cleanup and initiating libraries.
 
 ```{r frontmatter, results='hide', message = FALSE, warning = FALSE}
@@ -34,6 +36,8 @@ require(tidyverse)  # Keepin' it real
 require(fields)     # Creating smooth surfaces
 require(reshape2)   # Melting surface matrix back into tidy format
 require(lutz)       # Lookup time zone from lat/lon point
+require(lubridate)  # Easy date manipulation
+require(sentimentr) # Estimate sentiment of text
 ```
 
 Now let's download the copy of the raw colornames.org data from OSF:
@@ -44,9 +48,9 @@ download.file("https://osf.io/p25f9/download",temp) # variants - all name propos
 data <- read.csv(temp,header=FALSE,col.names=c("hexcode", "name", "votes", "submit_date", "user_id", "country_iso", "subdivision_iso", "city_name", "postal_code", "latitude", "longitude", "accuracy_radius"),stringsAsFactors=FALSE)
 ```
 
-Preprocessing:
+Fix things, make things as they should be:
 
-```{r preprocessing}
+```{r preprocessing, results='hide', message = FALSE, warning = FALSE}
 # Remove proposals by the publisher, which were only intended to seed the initiative
 data <- data %>% filter(user_id != "d7de10d8a0ee2a852de36b128ef7eaac9a39f6f6") 
 # Remove errant values (maybe blank proposals?)
@@ -61,14 +65,51 @@ data$latitude[data$city_name=="Comandante Nicanor Otamendi"] <- -38.1167
 data$longitude[data$city_name=="Comandante Nicanor Otamendi"] <- -57.85
 # Add timezone to the data
 data <- data %>% mutate(tz = tz_lookup_coords(latitude, longitude, method = "fast"))
-# Convert submission timestamps into timestamps with local timezone
-data$submit_at <- as.POSIXlt(NA) # Initialize column
-for (i in 1:length(data)) {
-  if (is.na(data$tz[i])) {
-    data$submit_at[i] <- as.POSIXlt(data$submit_date[i],format="%Y-%m-%d %H:%M:%OS",data$tz[i])
-  } else {
-    data$submit_at[i] <- as.POSIXlt(data$submit_date[i],format="%Y-%m-%d %H:%M:%OS")
-  }
-}
-data$submit_date <- NULL
+# Convert submission timestamp strings into timestamps
+data$submit_date <- ymd_hms(data$submit_date)
+```
+
+## Descriptive Analyses
+
+With the data all imported and preprocessed, we can do some basic summaries of the dataset, just to better-understand what we're dealing with.
+
+```{r descriptive-analyses}
+# How many colorname proposals over time?
+data %>% mutate(date = as.Date(submit_date,"GMT")) %>% 
+  ggplot(aes(x=date)) + 
+  geom_histogram(binwidth=30)
+# Where are these proposals coming from?
+ggplot() + borders("world", colour="gray50", fill="gray50") +
+  geom_point(aes(x=data$longitude,y=data$latitude), color="blue", size=2)
+
+```
+
+## Sentiment
+
+The colornames provided can be estimated for their valence (positive/negative) of sentiment.  There is a well-established body of work examining color preferences across the color spectrum.  The sentiment of color names may provide complementary insights into humans' preferences for different colors.
+
+```{r sentiment-analyses}
+# Get sentiment from sentimentr; this takes a while
+data <- data %>% select(name) %>% get_sentences() %>% 
+  sentiment_by() %>% select(sentiment = ave_sentiment) %>% bind_cols(data,.)
+# Recreate Fig 1C from Palmer & Schloss (2010): 10.1073/pnas.0906172107
+fdat <- data %>% filter(v>0.6) %>%
+                 mutate(hbin = as.character(ntile(h,8)+1),
+                        sbin = if_else(v < 0.7, "Dark",
+                               if_else(s < 0.3, "Light",
+                               if_else(s < 0.5, "Muted","Saturated")))) %>%  # as.character(ntile(s,4))) 
+                 mutate(hbin = if_else(hbin=="9","1",hbin))
+cat_data <- fdat %>% group_by(sbin,hbin) %>% summarize(red = mean(red),
+                                                       green = mean(green),
+                                                       blue = mean(blue),
+                                                       sentiment = mean(sentiment))
+cat_data$sbin <- factor(cat_data$sbin, levels=c("Saturated","Light","Muted","Dark"))
+cat_data$hex <- rgb(round(cat_data$red,0), round(cat_data$green,0), round(cat_data$blue,0), maxColorValue = 255)
+ggplot(cat_data,aes(x=hbin,y=sentiment,shape=sbin,group=1)) +
+  geom_point(color=cat_data$hex,size=3) +
+  scale_shape_manual(values=c(16, 17, 18,15)) + 
+  geom_path(aes(group=sbin),size=0.5) +
+  scale_x_discrete(labels=c("1"="R","2"="O","3"="Y","4"="H","5"="G","6"="C","7"="B","8"="P")) +
+  xlab("Hue") + ylab("Sentiment") + labs(shape="")
+
 ```
