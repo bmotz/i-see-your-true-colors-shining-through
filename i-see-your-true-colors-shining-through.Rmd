@@ -1,0 +1,45 @@
+---
+title: "i-see-your-true-colors-shining-through"
+author: "Benjamin Motz"
+date: "5/5/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Background
+
+For months, people have been naming colors on the internet.  A collaborative effort to create descriptive labels for every color in the RGB/web space exists at <https://colornames.org>, where visitors can propose new names for colors, upvote or downvote existing names, or download the full set of all named colors.  When a user names a color, they are invited to name a new color, selected at random.  There is no instruction other than to "Please be descriptive and creative."  
+
+The names provided offer a spectacular wealth of information about psychological associations across the color spectrum.  For example, are there patterns in the sentiment of color names for different hues?  Do people associate different colors with different emotions? 
+
+On May 2, 2020, Guy K. from <https://colornames.org> generously provided a dump of the complete colornames.org database, enhanced with timestamps of when names were proposed and votes were cast, and including geolocation data (inferred from visitor IP addresses using the MaxMind GeoIP2 lookup table).  This markdown file documents analyses of these data.
+
+We'll start with some basic cleanup and initiating libraries.
+
+```{r frontmatter, results='hide', message = FALSE, warning = FALSE}
+# Clean up
+graphics.off()
+rm(list=ls())
+set.seed(100)
+# Libraries
+require(tidyverse)  # Keepin' it real
+require(fields)     # Creating smooth surfaces
+require(reshape2)   # Melting surface matrix back into tidy format
+```
+
+Now let's download the copy of the raw colornames.org data from OSF:
+
+```{r colornames-download}
+temp <- tempfile()
+download.file("https://osf.io/p25f9/download",temp) # variants - all name proposals
+data <- read.csv(temp,header=FALSE,col.names=c("hexcode", "name", "votes", "submit_date", "user_id", "country_iso", "subdivision_iso", "city_name", "postal_code", "latitude", "longitude", "accuracy_radius"),stringsAsFactors=FALSE)
+```
+
+Preprocessing:
+
+```{r preprocessing}
+data <- data %>% filter(user_id != "d7de10d8a0ee2a852de36b128ef7eaac9a39f6f6") # Remove proposals by the publisher, which were only intended to seed the initiative
+```
