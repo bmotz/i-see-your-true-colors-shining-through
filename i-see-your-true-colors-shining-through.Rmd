@@ -33,6 +33,7 @@ set.seed(100)
 require(tidyverse)  # Keepin' it real
 require(fields)     # Creating smooth surfaces
 require(reshape2)   # Melting surface matrix back into tidy format
+require(lutz)       # Lookup time zone from lat/lon point
 ```
 
 Now let's download the copy of the raw colornames.org data from OSF:
@@ -46,5 +47,28 @@ data <- read.csv(temp,header=FALSE,col.names=c("hexcode", "name", "votes", "subm
 Preprocessing:
 
 ```{r preprocessing}
-data <- data %>% filter(user_id != "d7de10d8a0ee2a852de36b128ef7eaac9a39f6f6") # Remove proposals by the publisher, which were only intended to seed the initiative
+# Remove proposals by the publisher, which were only intended to seed the initiative
+data <- data %>% filter(user_id != "d7de10d8a0ee2a852de36b128ef7eaac9a39f6f6") 
+# Remove errant values (maybe blank proposals?)
+data <- data %>% filter(name != "")
+# Add RGB and HSV
+data <- cbind(data,t(col2rgb(paste("#",data$hexcode,sep = "")))) # RGB
+data <- cbind(data,t(rgb2hsv(data$red,data$green,data$blue))) # HSV
+# Fix the latitude and longitude
+data$latitude <- as.numeric(data$latitude)
+data$longitude <- as.numeric(data$longitude)
+data$latitude[data$city_name=="Comandante Nicanor Otamendi"] <- -38.1167
+data$longitude[data$city_name=="Comandante Nicanor Otamendi"] <- -57.85
+# Add timezone to the data
+data <- data %>% mutate(tz = tz_lookup_coords(latitude, longitude, method = "fast"))
+# Convert submission timestamps into timestamps with local timezone
+data$submit_at <- as.POSIXlt(NA) # Initialize column
+for (i in 1:length(data)) {
+  if (is.na(data$tz[i])) {
+    data$submit_at[i] <- as.POSIXlt(data$submit_date[i],format="%Y-%m-%d %H:%M:%OS",data$tz[i])
+  } else {
+    data$submit_at[i] <- as.POSIXlt(data$submit_date[i],format="%Y-%m-%d %H:%M:%OS")
+  }
+}
+data$submit_date <- NULL
 ```

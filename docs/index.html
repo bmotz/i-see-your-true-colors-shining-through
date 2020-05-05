@@ -382,13 +382,43 @@ set.seed(100)
 # Libraries
 require(tidyverse)  # Keepin' it real
 require(fields)     # Creating smooth surfaces
-require(reshape2)   # Melting surface matrix back into tidy format</code></pre>
+require(reshape2)   # Melting surface matrix back into tidy format
+require(lutz)       # Lookup time zone from lat/lon point</code></pre>
 <p>Now let’s download the copy of the raw colornames.org data from OSF:</p>
 <pre class="r"><code>temp &lt;- tempfile()
 download.file(&quot;https://osf.io/p25f9/download&quot;,temp) # variants - all name proposals
 data &lt;- read.csv(temp,header=FALSE,col.names=c(&quot;hexcode&quot;, &quot;name&quot;, &quot;votes&quot;, &quot;submit_date&quot;, &quot;user_id&quot;, &quot;country_iso&quot;, &quot;subdivision_iso&quot;, &quot;city_name&quot;, &quot;postal_code&quot;, &quot;latitude&quot;, &quot;longitude&quot;, &quot;accuracy_radius&quot;),stringsAsFactors=FALSE)</code></pre>
 <p>Preprocessing:</p>
-<pre class="r"><code>data &lt;- data %&gt;% filter(user_id != &quot;d7de10d8a0ee2a852de36b128ef7eaac9a39f6f6&quot;) # Remove proposals by the publisher, which were only intended to seed the initiative</code></pre>
+<pre class="r"><code># Remove proposals by the publisher, which were only intended to seed the initiative
+data &lt;- data %&gt;% filter(user_id != &quot;d7de10d8a0ee2a852de36b128ef7eaac9a39f6f6&quot;) 
+# Remove errant values (maybe blank proposals?)
+data &lt;- data %&gt;% filter(name != &quot;&quot;)
+# Add RGB and HSV
+data &lt;- cbind(data,t(col2rgb(paste(&quot;#&quot;,data$hexcode,sep = &quot;&quot;)))) # RGB
+data &lt;- cbind(data,t(rgb2hsv(data$red,data$green,data$blue))) # HSV
+# Fix the latitude and longitude
+data$latitude &lt;- as.numeric(data$latitude)</code></pre>
+<pre><code>## Warning: NAs introduced by coercion</code></pre>
+<pre class="r"><code>data$longitude &lt;- as.numeric(data$longitude)
+data$latitude[data$city_name==&quot;Comandante Nicanor Otamendi&quot;] &lt;- -38.1167
+data$longitude[data$city_name==&quot;Comandante Nicanor Otamendi&quot;] &lt;- -57.85
+# Add timezone to the data
+data &lt;- data %&gt;% mutate(tz = tz_lookup_coords(latitude, longitude, method = &quot;fast&quot;))</code></pre>
+<pre><code>## Warning in abs(stats::na.omit(lat)) &gt; 90 | abs(stats::na.omit(lon)) &gt; 180:
+## longer object length is not a multiple of shorter object length</code></pre>
+<pre><code>## Warning: Using 'fast' method. This can cause inaccuracies in time zones
+##   near boundaries away from populated ares. Use the 'accurate'
+##   method if accuracy is more important than speed.</code></pre>
+<pre class="r"><code># Convert submission timestamps into timestamps with local timezone
+data$submit_at &lt;- as.POSIXlt(NA) # Initialize column
+for (i in 1:length(data)) {
+  if (is.na(data$tz[i])) {
+    data$submit_at[i] &lt;- as.POSIXlt(data$submit_date[i],format=&quot;%Y-%m-%d %H:%M:%OS&quot;,data$tz[i])
+  } else {
+    data$submit_at[i] &lt;- as.POSIXlt(data$submit_date[i],format=&quot;%Y-%m-%d %H:%M:%OS&quot;)
+  }
+}
+data$submit_date &lt;- NULL</code></pre>
 </div>
 
 
