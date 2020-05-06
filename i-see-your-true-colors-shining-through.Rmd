@@ -72,6 +72,8 @@ local.data <- data %>% filter(!is.na(tz)) %>% rowwise %>%
   mutate(local_submit_date = force_tz(submit_date,tz)) %>%
   select(hexcode,name,votes,user_id,submit_date,local_submit_date)
 data <- merge(data, local.data, by=c("hexcode","name","votes","user_id","submit_date"), all.x = TRUE)
+# Remove duplicates
+data <- data %>% distinct(hexcode,name,votes,user_id,submit_date,local_submit_date, .keep_all = TRUE)
 ```
 
 ## Descriptive Analyses
