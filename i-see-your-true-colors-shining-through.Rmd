@@ -89,7 +89,7 @@ data %>% filter(!is.na(local_submit_date)) %>% mutate(hour = hour(local_submit_d
   geom_histogram(binwidth=1)
 # Where are these proposals coming from?
 ggplot() + borders("world", colour="gray50", fill="gray50") +
-  geom_point(aes(x=data$longitude,y=data$latitude), color="blue", size=2)
+  geom_point(aes(x=data$longitude,y=data$latitude), color="blue", size=1)
 
 ```
 
@@ -102,21 +102,65 @@ The colornames provided can be estimated for their valence (positive/negative) o
 data <- data %>% select(name) %>% get_sentences() %>% 
   sentiment_by() %>% select(sentiment = ave_sentiment) %>% bind_cols(data,.)
 # Sentiment over time of day
+# Noteworthy that there's nothing here really.  
 data %>% filter(!is.na(local_submit_date)) %>% mutate(hour = hour(local_submit_date)) %>%
   group_by(hour) %>% summarize(avg_sentiment = mean(sentiment)) %>%
   ggplot(aes(x=hour, y=avg_sentiment)) + 
   geom_line()
 # Recreate Fig 1C from Palmer & Schloss (2010): 10.1073/pnas.0906172107
-fdat <- data %>% filter(v>0.6) %>%
-                 mutate(hbin = as.character(ntile(h,8)+1),
-                        sbin = if_else(v < 0.7, "Dark",
-                               if_else(s < 0.3, "Light",
-                               if_else(s < 0.5, "Muted","Saturated")))) %>%  # as.character(ntile(s,4))) 
-                 mutate(hbin = if_else(hbin=="9","1",hbin))
-cat_data <- fdat %>% group_by(sbin,hbin) %>% summarize(red = mean(red),
-                                                       green = mean(green),
-                                                       blue = mean(blue),
-                                                       sentiment = mean(sentiment))
+# Define the centroid of the 32 colors in the Berkeley Color Project
+# "S" is saturated, "L" is light, "M" is muted, "D" is dark
+# "R"ed "O"range "Y"ellow c"H"artreuse "G"reen "C"yan "B"lue "P"urple
+palmerCats <- data.frame(slice=character(32),hue=character(32),
+                         r=numeric(32),g=numeric(32),b=numeric(32),
+                         stringsAsFactors = FALSE)
+palmerCats[1, ] <- list("Saturated","1",238,0,89)
+palmerCats[2, ] <- list("Saturated","2",246,146,36)
+palmerCats[3, ] <- list("Saturated","3",255,237,14)
+palmerCats[4, ] <- list("Saturated","4",182,218,56)
+palmerCats[5, ] <- list("Saturated","5",105,200,133)
+palmerCats[6, ] <- list("Saturated","6",96,202,213)
+palmerCats[7, ] <- list("Saturated","7",104,164,222)
+palmerCats[8, ] <- list("Saturated","8",157,69,159)
+palmerCats[9, ] <- list("Light","1",246,145,188)
+palmerCats[10,] <- list("Light","2",255,204,168)
+palmerCats[11,] <- list("Light","3",255,240,158)
+palmerCats[12,] <- list("Light","4",228,238,151)
+palmerCats[13,] <- list("Light","5",119,232,200)
+palmerCats[14,] <- list("Light","6",167,224,233)
+palmerCats[15,] <- list("Light","7",175,198,236)
+palmerCats[16,] <- list("Light","8",184,158,201)
+palmerCats[17,] <- list("Muted","1",207,115,144)
+palmerCats[18,] <- list("Muted","2",211,155,119)
+palmerCats[19,] <- list("Muted","3",223,205,116)
+palmerCats[20,] <- list("Muted","4",182,207,99)
+palmerCats[21,] <- list("Muted","5",134,208,147)
+palmerCats[22,] <- list("Muted","6",139,211,214)
+palmerCats[23,] <- list("Muted","7",130,160,207)
+palmerCats[24,] <- list("Muted","8",164,112,170)
+palmerCats[25,] <- list("Dark","1",164,21,68)
+palmerCats[26,] <- list("Dark","2",160,89,47)
+palmerCats[27,] <- list("Dark","3",161,154,55)
+palmerCats[28,] <- list("Dark","4",129,158,68)
+palmerCats[29,] <- list("Dark","5",45,158,113)
+palmerCats[30,] <- list("Dark","6",42,159,159)
+palmerCats[31,] <- list("Dark","7",66,126,187)
+palmerCats[32,] <- list("Dark","8",118,48,150)
+distThresh <- 30
+fdat <- data %>% mutate(sbin=NA,hbin=NA)
+for (i in 1:nrow(palmerCats)) { # Cheap way of binning
+  fdat$sbin[between(fdat$red, palmerCats$r[i]-distThresh, palmerCats$r[i]+distThresh) &
+              between(fdat$green, palmerCats$g[i]-distThresh, palmerCats$g[i]+distThresh) &
+              between(fdat$blue, palmerCats$b[i]-distThresh, palmerCats$b[i]+distThresh)] <- palmerCats$slice[i]
+  fdat$hbin[between(fdat$red, palmerCats$r[i]-distThresh, palmerCats$r[i]+distThresh) &
+              between(fdat$green, palmerCats$g[i]-distThresh, palmerCats$g[i]+distThresh) &
+              between(fdat$blue, palmerCats$b[i]-distThresh, palmerCats$b[i]+distThresh)] <- palmerCats$hue[i]
+}
+cat_data <- fdat %>% filter(!is.na(sbin)) %>% group_by(sbin,hbin) %>% 
+  summarize(red = mean(red),
+            green = mean(green),
+            blue = mean(blue),
+            sentiment = mean(sentiment))
 cat_data$sbin <- factor(cat_data$sbin, levels=c("Saturated","Light","Muted","Dark"))
 cat_data$hex <- rgb(round(cat_data$red,0), round(cat_data$green,0), round(cat_data$blue,0), maxColorValue = 255)
 ggplot(cat_data,aes(x=hbin,y=sentiment,shape=sbin,group=1)) +
@@ -125,5 +169,22 @@ ggplot(cat_data,aes(x=hbin,y=sentiment,shape=sbin,group=1)) +
   geom_path(aes(group=sbin),size=0.5) +
   scale_x_discrete(labels=c("1"="R","2"="O","3"="Y","4"="H","5"="G","6"="C","7"="B","8"="P")) +
   xlab("Hue") + ylab("Sentiment") + labs(shape="")
+```
 
+Make the full surface map of all sentiments for all colors...
+
+```{r sentiment-surface}
+m <- data %>% mutate(hbin=ntile(h,11),
+                     sbin=ntile(s,11)) %>% 
+  group_by(hbin,sbin) %>% summarize(sentiment=mean(sentiment)) %>% 
+  pivot_wider(names_from = sbin, values_from = sentiment) %>% ungroup() %>% select(-hbin) %>% as.matrix()
+obj <- list(x=0:10/10,y=0:10/10,z=m)
+surf <- interp.surface.grid(obj=obj,grid.list=list(x=seq(0,1,length=101),
+                                                   y=seq(0,1,length=101)))
+dimnames(surf$z) <- list(x=surf$x,y=surf$y)
+meltedsurf <- melt(surf,value.name="z") %>% na.omit() %>% select(-L1)
+ggplot(meltedsurf,aes(x=x,y=y,z=z,fill=z)) +
+  geom_tile() + 
+  scale_fill_gradient2(name="Sentiment") +
+  xlab("Hue") + ylab("Saturation")  
 ```
