@@ -1,5 +1,5 @@
 ---
-title: "i-see-your-true-colors-shining-through"
+title: "I See Your True Colors Shining Through"
 knit: (function(input_file, encoding) {
   out_dir <- 'docs';
   rmarkdown::render(input_file,
@@ -103,12 +103,6 @@ The colornames provided can be estimated for their valence (positive/negative) o
 # Get sentiment from sentimentr; this takes a long while
 data <- data %>% select(name) %>% get_sentences() %>% 
   sentiment_by() %>% select(sentiment = ave_sentiment) %>% bind_cols(data,.)
-# Sentiment over time of day
-# Noteworthy that there's nothing here really.  
-data %>% filter(!is.na(local_submit_date)) %>% mutate(hour = hour(local_submit_date)) %>%
-  group_by(hour) %>% summarize(avg_sentiment = mean(sentiment)) %>%
-  ggplot(aes(x=hour, y=avg_sentiment)) + 
-  geom_line()
 # Recreate Fig 1C from Palmer & Schloss (2010): 10.1073/pnas.0906172107
 # Define the centroid of the 32 colors in the Berkeley Color Project
 # "S" is saturated, "L" is light, "M" is muted, "D" is dark
@@ -185,8 +179,126 @@ surf <- interp.surface.grid(obj=obj,grid.list=list(x=seq(0,1,length=101),
                                                    y=seq(0,1,length=101)))
 dimnames(surf$z) <- list(x=surf$x,y=surf$y)
 meltedsurf <- melt(surf,value.name="z") %>% na.omit() %>% select(-L1)
+ggplot(meltedsurf,aes(x=x,y=y)) +
+  geom_tile(aes(fill=z)) + 
+  scale_fill_gradient2(name="Sentiment") +
+  xlab("Hue") + ylab("Saturation")
+```
+
+## Semantics of Color
+
+Sentiment is pretty cool, but instead of showing positive and negative sentiment across the color space, wouldn't it be cool to see how psychological *categories* map onto colors?  What parts of the color space are associated with food, with love, with sadness...  To classify color names according to categories, we're going to use pretrained GloVe embeddings from Wikipedia, available at <http://nlp.stanford.edu/data/glove.6B.zip>.  We've got a copy on OSF...
+
+```{r semantic-analysis}
+temp <- tempfile()
+download.file("https://osf.io/e2j3w/download",temp) 
+g6b <- scan(temp, what="", sep="\n")
+vals <- vector(mode = "list", length(g6b))
+names <- character(length(g6b))
+for (i in 1:length(g6b)) { # this takes a minute or so
+  this_vec <- g6b[i]
+  this_vec_unlisted <- unlist(strsplit(this_vec, " "))
+  this_vec_values <- as.numeric(this_vec_unlisted[-1])
+  this_vec_name <- this_vec_unlisted[1]
+  vals[[i]] <- this_vec_values
+  names[[i]] <- this_vec_name
+}
+glove <- data.frame(vals)
+names(glove) <- names
+```
+
+Let's start by exploring the category "food".  This is actually a pretty diverse category, so rather than just relating a color name to the "food" vector, we'll compare the tokens in color names to a broad range of food subcategories, and then use the maximum similarity across all subcategories to make a binary decision (yes/no) about whether a colorname is related to "food" or not.
+
+```{r food-analysis}
+# Categories are from Wikipedia's "List of Foods" page
+categories <-     c('legumes','fruit','potatoes','vegetables','mushrooms',
+                    'nuts','breads','dairy','butter','cheese','eggs',
+                    'meat','cereals','seafood','berries','appetizers',
+                    'condiments','confectionery','desserts','dips',
+                    'dumplings','halal','kosher','noodles','pies',
+                    'salads','sandwiches','sauces','snacks','soups',
+                    'stews','cuisine','nutrition','beverages','dishes')
+# Make a smaller set of word embeddings
+glovecategories <- glove[,which( colnames(glove) %in% categories )] 
+
+# For this analysis we're going to take a subset of the colornames
+# for the sake of efficiency
+sdat <- data[sample(nrow(data),200000),] 
+
+# Initialize an output file
+output <- data.frame(name = sdat$name,
+                     hexcode = sdat$hexcode,
+                     simcat = character(length(sdat$name)),
+                     simscore = numeric(length(sdat$name)),
+                     stringsAsFactors = FALSE)
+for (i in 1:length(sdat$name)) {
+  maxcat <- "none"
+  maxsim <- 0
+  this.name <- sdat$name[i] %>% tolower() %>% 
+    str_replace_all("[^[:alpha:]]", " ") %>% 
+    str_replace_all("\\s+", " ") %>% 
+    str_replace_all("red","") %>% str_replace_all("orange","") %>% str_replace_all("yellow","") %>% 
+    str_replace_all("green","") %>% str_replace_all("blue","") %>% str_replace_all("brown","") %>% 
+    str_replace_all("purple","") %>% str_replace_all("violet","") %>% str_replace_all("pink","") 
+  source.words <- strsplit(this.name," ")[[1]]
+  for (j in 1:length(source.words)) {
+    try({
+      source.vector <- glove[[source.words[j]]]
+      for (cat in categories) {
+        target.vector <- glovecategories[[cat]]
+        dot_product <- source.vector %*% target.vector
+        norm_prod <- sqrt(sum(source.vector**2)) * sqrt(sum(target.vector**2))
+        similarity <- as.numeric(dot_product/norm_prod)
+        if (similarity > maxsim) {
+          maxcat <- cat
+          maxsim <- similarity
+        }
+      }
+    },silent=TRUE)
+  }
+  output$simcat[i] <- maxcat
+  output$simscore[i] <- maxsim
+  if(i %% 1000 == 0) {print(paste(i,": ",sdat$name[i],":",maxcat,",",maxsim))}
+}
+# Combine back with color values
+sdat <- merge(sdat,output,by=c("name","hexcode"))
+# Decide whether it's a food (>0.6)
+sdat <- sdat %>% mutate(simbin = if_else(simscore < 0.6, 0, 1))
+## Let's try the Palmer & Schloss plot again
+fdat <- sdat %>% mutate(sbin=NA,hbin=NA)
+for (i in 1:nrow(palmerCats)) { # Cheap way of binning
+  fdat$sbin[between(fdat$red, palmerCats$r[i]-distThresh, palmerCats$r[i]+distThresh) &
+              between(fdat$green, palmerCats$g[i]-distThresh, palmerCats$g[i]+distThresh) &
+              between(fdat$blue, palmerCats$b[i]-distThresh, palmerCats$b[i]+distThresh)] <- palmerCats$slice[i]
+  fdat$hbin[between(fdat$red, palmerCats$r[i]-distThresh, palmerCats$r[i]+distThresh) &
+              between(fdat$green, palmerCats$g[i]-distThresh, palmerCats$g[i]+distThresh) &
+              between(fdat$blue, palmerCats$b[i]-distThresh, palmerCats$b[i]+distThresh)] <- palmerCats$hue[i]
+}
+cat_data <- fdat %>% filter(!is.na(sbin)) %>% group_by(sbin,hbin) %>% 
+  summarize(red = mean(red),
+            green = mean(green),
+            blue = mean(blue),
+            foodness = mean(simbin))
+cat_data$sbin <- factor(cat_data$sbin, levels=c("Saturated","Light","Muted","Dark"))
+cat_data$hex <- rgb(round(cat_data$red,0), round(cat_data$green,0), round(cat_data$blue,0), maxColorValue = 255)
+ggplot(cat_data,aes(x=hbin,y=foodness,shape=sbin,group=1)) +
+  geom_point(color=cat_data$hex,size=3) +
+  scale_shape_manual(values=c(16, 17, 18,15)) + 
+  geom_path(aes(group=sbin),size=0.5) +
+  scale_x_discrete(labels=c("1"="R","2"="O","3"="Y","4"="H","5"="G","6"="C","7"="B","8"="P")) +
+  xlab("Hue") + ylab("Foodness") + labs(shape="")
+## Plot the surface
+m <- sdat %>% mutate(hbin=ntile(h,11),
+                     sbin=ntile(s,11)) %>% 
+  group_by(hbin,sbin) %>% summarize(foodness=mean(simbin)) %>% 
+  pivot_wider(names_from = sbin, values_from = foodness) %>% ungroup() %>% select(-hbin) %>% as.matrix()
+obj <- list(x=0:10/10,y=0:10/10,z=m)
+surf <- interp.surface.grid(obj=obj,grid.list=list(x=seq(0,1,length=101),
+                                                   y=seq(0,1,length=101)))
+dimnames(surf$z) <- list(x=surf$x,y=surf$y)
+meltedsurf <- melt(surf,value.name="z") %>% na.omit() %>% select(-L1)
 ggplot(meltedsurf,aes(x=x,y=y,z=z,fill=z)) +
   geom_tile() + 
-  scale_fill_gradient2(name="Sentiment") +
+  scale_fill_gradient2(name="Foodness", low = "white", high = "red") +
   xlab("Hue") + ylab("Saturation")  
 ```
